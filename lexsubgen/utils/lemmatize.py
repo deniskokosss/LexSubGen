@@ -34,6 +34,7 @@ to_spacy_pos = {
 def spacy_lemmatize(
     unlem: List[str],
     pos_tag: Union[str, List[str]] = "NOUN",
+    lang: str = 'en',
     verbose: bool = False,
     spacy_version: str = spacy.__version__,
 ) -> List[str]:
@@ -75,6 +76,7 @@ def spacy_lemmatize(
 @memory.cache
 def old_spacy_lemmatize(
     unlem: List[str],
+    lang: str = 'en',
     verbose: bool = False,
     spacy_version: str = spacy.__version__,
 ) -> List[str]:
@@ -89,10 +91,20 @@ def old_spacy_lemmatize(
     Returns:
         sequence of lemmatized words
     """
+    lang2model = {
+        'en': 'en_core_web_md',
+        'es': 'es_core_news_md',
+        'de': 'de_core_news_md',
+        'fr': 'fr_core_news_md',
+        'sv': 'sv_core_news_md',
+        'ru': 'ru_core_news_md',
+        'it': 'it_core_news_md',
+        'ja': 'ja_core_news_md',
+    }
     if spacy_version != "2.1.8":
         warnings.warn(f"Your results may depend on the version of spacy: {spacy_version}")
 
-    nlp = spacy.load("en", disable=["ner", "parser"])
+    nlp = spacy.load(lang2model[lang], disable=["ner", "parser"])
 
     lemmatized_words = []
 
@@ -100,7 +112,7 @@ def old_spacy_lemmatize(
         # When using spacy 2.1.8 it warns: "DeprecationWarning: [W016] The keyword argument `n_threads` is now deprecated.
         #   As of v2.2.2, the argument `n_process` controls parallel inference via multiprocessing."
         warnings.simplefilter("ignore")
-        gen = zip(nlp.pipe(unlem, batch_size=1000, n_threads=cpu_count()), unlem)
+        gen = zip(nlp.pipe(unlem, batch_size=1000), unlem)
 
         if verbose:
             gen = tqdm(gen, total=len(unlem), desc=f"Lemmatization of {len(unlem)} words")
@@ -194,6 +206,7 @@ def lemmatize_words(
     unlem: List[str],
     lemmatizer_name: str,
     pos_tag: Union[str, List[str]] = "n",
+    lang: str = 'en',
     verbose: bool = False,
 ) -> List[str]:
     """
@@ -210,12 +223,16 @@ def lemmatize_words(
         sequence of lemmatized words
     """
     if lemmatizer_name == "nltk":
+        if lang != 'en':
+            raise ValueError("NLTK does not support languages other than en")
         lemmatized = nltk_lemmatize(unlem, pos_tag, verbose)
     elif lemmatizer_name == "spacy":
-        lemmatized = spacy_lemmatize(unlem, pos_tag, verbose)
+        lemmatized = spacy_lemmatize(unlem, pos_tag, lang, verbose)
     elif lemmatizer_name == "spacy_old":
-        lemmatized = old_spacy_lemmatize(unlem, verbose)
+        lemmatized = old_spacy_lemmatize(unlem, lang, verbose)
     elif lemmatizer_name == "pymorphy-ru":
+        if lang != 'ru':
+            raise ValueError("Pymorphy does not support languages other than ru")
         lemmatized = pymorphy_ru_lemmatize(unlem, verbose)
     else:
         raise ValueError(f"Incorrect lemmatizer type: {lemmatizer_name}")
@@ -263,6 +280,7 @@ def lemmatize_batch(
 def get_all_vocabs(
     old_word2id: Dict[str, int],
     lemmatizer: str,
+    lang: str = 'en',
     pos_tag: str = "n",
     verbose: bool = False,
 ) -> Tuple[Dict[str, List[int]], Dict[str, int]]:
@@ -282,7 +300,7 @@ def get_all_vocabs(
     sorted_vocab = sorted(old_word2id.items(), key=lambda x: x[0])
     sorted_words, sorted_idxs = list(zip(*sorted_vocab))
 
-    new_vocab = lemmatize_words(sorted_words, lemmatizer, pos_tag, verbose)
+    new_vocab = lemmatize_words(sorted_words, lemmatizer, pos_tag, lang, verbose)
 
     lemma2words = defaultdict(list)
     word2id = dict()
@@ -297,6 +315,7 @@ def get_all_vocabs(
 def get_wordform2lemma(
     vocabulary: List[str],
     lemmatizer: str,
+    lang: str = 'en',
     pos_tag: str = "n",
     verbose: bool = False
 ) -> Dict[str, str]:
@@ -310,5 +329,5 @@ def get_wordform2lemma(
 
     Returns: mapping from word form to its lemma
     """
-    lemmatized = lemmatize_words(vocabulary, lemmatizer, pos_tag, verbose)
+    lemmatized = lemmatize_words(vocabulary, lemmatizer, lang, pos_tag, verbose)
     return dict(zip(vocabulary, lemmatized))

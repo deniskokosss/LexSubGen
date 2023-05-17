@@ -127,6 +127,7 @@ class BcombCombiner(Combiner):
         k: float = 4.0,
         s: float = 1.05,
         beta: float = 0.0,
+        lang: str = 'en',
         verbose: bool = False,
     ):
         """
@@ -149,6 +150,7 @@ class BcombCombiner(Combiner):
         )
         self.k = k
         self.s = s
+        self.lang = lang
         self.beta = beta
         self.bcomb_prior_log_prob = None
         self.prev_word2id = {}
@@ -191,7 +193,7 @@ class BcombCombiner(Combiner):
         """
         prior_prob = np.zeros(len(word2id), dtype=np.float32)
         for word, idx in word2id.items():
-            prior_prob[idx] = word_frequency(word, "en")
+            prior_prob[idx] = word_frequency(word, self.lang)
 
         idxs = prior_prob.argsort()
         prior_prob[idxs] = np.arange(len(prior_prob), 0, -1) + self.k

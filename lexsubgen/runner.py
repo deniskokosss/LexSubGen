@@ -66,8 +66,8 @@ class Runner:
         dump_json(self.run_dir / "lib_versions.json", self.lib_versions)
 
         self.mlflow_dir = str(ENTRY_DIR / "mlruns")
-        mlflow.set_tracking_uri(self.mlflow_dir)
-        self.mlflow_client = MlflowClient(tracking_uri=self.mlflow_dir)
+        # mlflow.set_tracking_uri(self.mlflow_dir)
+        self.mlflow_client = MlflowClient()
 
     def evaluate(
         self,

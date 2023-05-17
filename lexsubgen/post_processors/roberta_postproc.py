@@ -59,7 +59,7 @@ class RobertaPostProcessor(PostProcessor):
         self.wordform2ids = defaultdict(list)
         self.notsubword2old_id = {}
         for word, idx in word2id.items():
-            if word.startswith('ġ') or word.startswith('Ġ'):
+            if word.startswith('ġ') or word.startswith('Ġ') or word.startswith('\u2581'):
                 self.wordform2ids[word[1:]].append(idx)
                 self.notsubword2old_id[word[1:]] = idx
             else:

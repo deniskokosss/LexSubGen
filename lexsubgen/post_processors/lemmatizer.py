@@ -8,7 +8,7 @@ from lexsubgen.utils.lemmatize import get_all_vocabs, lemmatize_batch
 
 
 class Lemmatizer(PostProcessor):
-    def __init__(self, lemmatizer: str, strategy: str, n_parallel_forms: int = 5):
+    def __init__(self, lemmatizer: str, strategy: str, lang: str = 'en', n_parallel_forms: int = 5):
         """
         Post-processor that squash vocabulary to lemmas vocabulary
         and aggregates probabilities of words in their lemmas according
@@ -22,6 +22,7 @@ class Lemmatizer(PostProcessor):
         super().__init__()
         self.lemmatizer = lemmatizer
         self.strategy = strategy
+        self.lang = lang
         self.n_parallel_forms = n_parallel_forms
         self.merged_vocab = {}
         self.prev_word2id = {}
@@ -155,7 +156,7 @@ class Lemmatizer(PostProcessor):
         vocabs = {}
         for pos_tag in pos_tags:
             lemma2words, transformed_word2id = get_all_vocabs(
-                word2id, self.lemmatizer, pos_tag
+                word2id, self.lemmatizer, pos_tag, lang=self.lang
             )
             vocabs[pos_tag] = transformed_word2id
             self.pos_lemma2words[pos_tag] = lemma2words

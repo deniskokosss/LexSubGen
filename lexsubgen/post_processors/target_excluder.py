@@ -8,7 +8,7 @@ from lexsubgen.utils.lemmatize import lemmatize_words, get_all_vocabs
 
 
 class TargetExcluder(PostProcessor):
-    def __init__(self, lemmatizer: Optional[str] = None, use_pos_tag: bool = True):
+    def __init__(self, lemmatizer: Optional[str] = None, use_pos_tag: bool = True, lang: str = 'en'):
         """
         PostProcessor that excludes target word forms from the prediction.
 
@@ -18,6 +18,7 @@ class TargetExcluder(PostProcessor):
         super(TargetExcluder, self).__init__()
         self.lemmatizer = lemmatizer
         self.use_pos_tag = use_pos_tag
+        self.lang = lang
         self.pos_lemma2words = {}
         # In the case of multi-subword generation word2id could change
         self.prev_word2id = {}
@@ -64,7 +65,7 @@ class TargetExcluder(PostProcessor):
         self.prev_word2id = word2id
 
         target_lemmas = lemmatize_words(
-            target_words, self.lemmatizer, target_pos, verbose=False
+            target_words, self.lemmatizer, target_pos, verbose=False, lang=self.lang
         )
 
         for i in range(log_probs.shape[0]):

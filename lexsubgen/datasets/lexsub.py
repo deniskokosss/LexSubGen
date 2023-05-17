@@ -14,6 +14,8 @@ logger.setLevel(logging.INFO)
 
 # Links to basic supported lexical substitution data sets.
 LEXSUB_DATASET_DRIVE_URLS = {
+    "germeval2015": "",
+    "lexsubfr_semdis2014": "",
     "coinco": "https://docs.google.com/uc?export=download&id=1Sb7I_0NpBJNq4AvMyAc9HJZidamJm-Rx",
     "semeval_all": "https://docs.google.com/uc?export=download&id=1TG-B09n2K5oRd_tJzMlBNhe0Jr_89s5c",
     "semeval_test": "https://docs.google.com/uc?export=download&id=1StQwn2d1eYy3phHfWqAyRYE7CTLsO2pg",
@@ -22,7 +24,8 @@ LEXSUB_DATASET_DRIVE_URLS = {
 }
 
 # List of supported data sets.
-LEXSUB_DATASETS = ("semeval_all", "semeval_trial", "semeval_test", "coinco", "twsi2")
+LEXSUB_DATASETS = ("semeval_all", "semeval_trial", "semeval_test", "coinco", "twsi2",
+                   'germeval2015', "lexsubfr_semdis2014")
 
 
 class LexSubDatasetReader(DatasetReader):

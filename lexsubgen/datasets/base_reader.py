@@ -67,7 +67,7 @@ class DatasetReader:
             download_dataset(self.url, self.dataset_path)
 
         logger.info(msg=f"Reading data from {file_path} file...")
-        with file_path.open("r") as f:
+        with file_path.open("r", encoding='UTF-8') as f:
             data = f.readlines()
 
         while "\n" in data:
