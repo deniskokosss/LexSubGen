@@ -156,7 +156,7 @@ class Lemmatizer(PostProcessor):
         vocabs = {}
         for pos_tag in pos_tags:
             lemma2words, transformed_word2id = get_all_vocabs(
-                word2id, self.lemmatizer, pos_tag, lang=self.lang
+                word2id, self.lemmatizer, self.lang, pos_tag,
             )
             vocabs[pos_tag] = transformed_word2id
             self.pos_lemma2words[pos_tag] = lemma2words

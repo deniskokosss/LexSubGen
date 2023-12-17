@@ -12,7 +12,7 @@ with open(str(REQUIREMENTS_PATH), "r", encoding="utf-8") as f:
 
 def dump_configs_to_cache():
     config_files = [
-        (f'{os.environ["HOME"]}/.cache/lexsubgen/' + str(Path(file).parent), file)
+        (f'.cache/lexsubgen/' + str(Path(file).parent), file)
         for file in list(glob.glob("configs/**/*.jsonnet", recursive=True))
     ]
     for file in config_files:

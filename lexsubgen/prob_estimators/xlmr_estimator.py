@@ -1,36 +1,36 @@
 import json
 import os
+import string
+from collections import defaultdict
 from pathlib import Path
 from string import punctuation
-from typing import NoReturn, Dict, List, Tuple
+from typing import NoReturn, Dict, List, Tuple, Literal
 
 import numpy as np
 import torch
+from fairseq import utils
 from overrides import overrides
-import fasttext
-import fasttext.util
 from transformers import XLMRobertaTokenizer, XLMRobertaForMaskedLM
 
-from fairseq.models.roberta import XLMRModel
+from fairseq.models.roberta import XLMRModel, RobertaHubInterface, RobertaModel
+from fairseq.data.encoders.sentencepiece_bpe import SentencepieceBPE
 
+from lexsubgen.prob_estimators import BaseProbEstimator
 from lexsubgen.prob_estimators.embsim_estimator import EmbSimProbEstimator
 
 
-class XLMRProbEstimator(EmbSimProbEstimator):
+class XLMRProbEstimatorMultimasked(BaseProbEstimator):
+    loaded = defaultdict(dict)
+
     def __init__(
         self,
-        lang: str = 'en',
-        mask_type: str = "masked",
-        mask_nums: List[int] = [2],
-        model_name: str = "xlmr-large",
-        embedding_similarity: bool = False,
-        temperature: float = 1.0,
-        use_attention_mask: bool = True,
-        cuda_device: int = -1,
-        sim_func: str = "dot-product",
-        unk_word_embedding: str = "first_subtoken",
-        filter_vocabulary_mode: str = "none",
+        num_masks: int = 1,
+        topk: int = 10,
+        model_name: str = "xlmr.large",
+        cuda_device: int = 0,
         verbose: bool = False,
+        dynamic_pattern: str = '<M>',
+        decoding_type: Literal['greedy', 'cwm'] = 'greedy'
     ):
         """
         Probability estimator based on the Roberta model.
@@ -49,20 +49,15 @@ class XLMRProbEstimator(EmbSimProbEstimator):
             embedding similarity
             verbose: whether to print misc information
         """
-        super(XLMRProbEstimator, self).__init__(
-            model_name=model_name,
-            temperature=temperature,
-            sim_func=sim_func,
+        super(XLMRProbEstimatorMultimasked, self).__init__(
             verbose=verbose,
         )
-        self.lang = lang
-        self.mask_type = mask_type
-        self.mask_nums = mask_nums
-        self.embedding_similarity = embedding_similarity
-        self.use_attention_mask = use_attention_mask
-        self.unk_word_embedding = unk_word_embedding
-        self.filter_vocabulary_mode = filter_vocabulary_mode
+        self.model_name = model_name
+        self.num_masks = num_masks
+        self.topk = topk
         self.prev_word2id = {}
+        self.dp = dynamic_pattern
+        self.dec_type = decoding_type
 
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         # os.environ["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
@@ -76,12 +71,7 @@ class XLMRProbEstimator(EmbSimProbEstimator):
                 "name": "xlmr",
                 "class": self.__class__.__name__,
                 "model_name": self.model_name,
-                "mask_type": self.mask_type,
-                "mask_nums": self.mask_nums,
-                "embedding_similarity": self.embedding_similarity,
-                "temperature": self.temperature,
-                "use_attention_mask": self.use_attention_mask,
-                "unk_word_embedding": self.unk_word_embedding,
+                "mask_nums": self.num_masks
             }
         }
 
@@ -91,22 +81,22 @@ class XLMRProbEstimator(EmbSimProbEstimator):
         self.logger.debug(f"Config:\n{json.dumps(self.descriptor, indent=4)}")
 
     @property
-    def tokenizer(self):
+    def tokenizer(self) -> SentencepieceBPE:
         """
         Model tokenizer.
 
         Returns:
             `transformers.RobertaTokenizer` tokenzier related to the model
         """
-        return self.loaded[self.model_name].bpe
+        return self.loaded[self.model_name]["model"].bpe
+
+    @property
+    def model(self) -> RobertaHubInterface:
+        return self.loaded[self.model_name]["model"]
 
     @property
     def parameters(self):
-        parameters = f"{self.mask_type}{self.mask_nums}{self.model_name}" \
-                     f"{self.use_attention_mask}{self.filter_vocabulary_mode}"
-
-        if self.embedding_similarity:
-            parameters += f"embs{self.unk_word_embedding}{self.sim_func}"
+        parameters = f"{self.num_masks}{self.model_name}"
 
         return parameters
 
@@ -118,7 +108,7 @@ class XLMRProbEstimator(EmbSimProbEstimator):
         e.g. when combining model prediction with embedding similarity by not loading into
         memory same model twice.
         """
-        if self.model_name not in XLMRProbEstimator.loaded:
+        if self.model_name not in XLMRProbEstimatorMultimasked.loaded:
 
             if self.model_name in ['xlmr.large', 'xlmr.base']:
                 model = torch.hub.load('pytorch/fairseq', self.model_name)
@@ -127,40 +117,44 @@ class XLMRProbEstimator(EmbSimProbEstimator):
                 model = XLMRModel.from_pretrained(str(p.parent), checkpoint_file=p.name)
             model = model.to(self.device).eval()
 
-            XLMRProbEstimator.loaded[self.model_name] = {
+            XLMRProbEstimatorMultimasked.loaded[self.model_name] = {
                 "model": model,
             }
-            XLMRProbEstimator.loaded[self.model_name]["ref_count"] = 1
+            XLMRProbEstimatorMultimasked.loaded[self.model_name]["ref_count"] = 1
         else:
-            XLMRProbEstimator.loaded[self.model_name]["ref_count"] += 1
+            XLMRProbEstimatorMultimasked.loaded[self.model_name]["ref_count"] += 1
 
-
-    @staticmethod
     def tokenize_around_target(
+        self,
         tokens: List[str],
         target_idx: int,
-        tokenizer: XLMRobertaTokenizer = None,
+        tokenizer: SentencepieceBPE = None,
     ):
-        left_specsym_len = 1  # for BERT / ROBERTA there is 1 spec token before text
-        input_text = ' '.join(tokens)
-        tokenized_text = tokenizer.encode(' ' + input_text, add_special_tokens=True)
+        assert len(self.dp.split('<M>')) == 2
+        left_dp, right_dp = self.dp.split('<M>')
+        left_ctx = ' '.join(tokens[:target_idx]) + ' ' + left_dp
+        if '<T>' in left_ctx:
+            left_ctx = left_ctx.replace('<T>', tokens[target_idx])
+        left_ctx_tokens = self.model.task.source_dictionary.encode_line(
+            '<s> ' + tokenizer.encode(left_ctx), append_eos=False, add_if_not_exist=False,
+        )
 
-        left_ctx = ' '.join(tokens[:target_idx])
-        target_start = left_specsym_len + len(tokenizer.encode(
-            ' ' + left_ctx, add_special_tokens=False
-        ))
+        right_ctx = right_dp + ' ' + ' '.join(tokens[target_idx + 1:])
+        if '<T>' in right_ctx:
+            right_ctx = right_ctx.replace('<T>', tokens[target_idx])
+        right_ctx_tokens = self.model.task.source_dictionary.encode_line(
+            tokenizer.encode(right_ctx), append_eos=True, add_if_not_exist=False,
+        )
 
-        left_ctx_target = ' '.join(tokens[:target_idx + 1])
-        target_subtokens_ids = tokenizer.encode(
-            ' ' + left_ctx_target, add_special_tokens=False
-        )[target_start - left_specsym_len:]
+        target_start_idx = len(left_ctx_tokens)
 
-        return tokenized_text, target_start, target_subtokens_ids
+        return left_ctx_tokens, right_ctx_tokens, target_start_idx
 
     def prepare_batch(
         self,
         batch_of_tokens: List[List[str]],
         batch_of_target_ids: List[int],
+        num_masks: int,
         tokenizer: XLMRobertaTokenizer = None,
     ):
         """
@@ -171,6 +165,7 @@ class XLMRProbEstimator(EmbSimProbEstimator):
         Args:
             batch_of_tokens: list of contexts
             batch_of_target_ids: list of target word indexes
+            num_masks: number of masks to replace target with
             tokenizer: tokenizer to use for word tokenization
 
         Returns:
@@ -183,14 +178,16 @@ class XLMRProbEstimator(EmbSimProbEstimator):
         max_seq_len = 0
         for tokens, target_idx in zip(batch_of_tokens, batch_of_target_ids):
             tokenized = self.tokenize_around_target(tokens, target_idx, tokenizer)
-            context, target_start, target_subtokens_ids = tokenized
+            left_context, right_context, target_start = tokenized
 
-            if self.mask_type == "masked":
-                context = context[:target_start] + \
-                          [tokenizer.mask_token_id] + \
-                          context[target_start + len(target_subtokens_ids):]
-            elif self.mask_type != "not_masked":
-                raise ValueError(f"Unrecognised masking type {self.mask_type}.")
+            if self.dec_type == 'cwm':
+                context = torch.cat([left_context,
+                                 torch.as_tensor([self.model.task.mask_idx]),
+                                 right_context])
+            else:
+                context = torch.cat([left_context,
+                                 torch.as_tensor([self.model.task.mask_idx] * num_masks),
+                                 right_context])
 
             if len(context) > 512:
                 first_subtok = context[target_start]
@@ -204,47 +201,150 @@ class XLMRProbEstimator(EmbSimProbEstimator):
             max_seq_len = max(max_seq_len, len(context))
 
             roberta_batch_of_tokens.append(context)
-            roberta_batch_of_target_ids.append(target_start)
+            roberta_batch_of_target_ids.append(np.arange(target_start, target_start + num_masks))
 
         assert max_seq_len <= 512
 
-        input_ids = np.vstack([
-            tokens + [tokenizer.pad_token_id] * (max_seq_len - len(tokens))
+        input_ids = torch.vstack([
+            torch.cat([tokens, torch.Tensor([2] * (max_seq_len - len(tokens)))])
             for tokens in roberta_batch_of_tokens
         ])
 
-        input_ids = torch.tensor(input_ids).to(self.device)
+        input_ids = input_ids.type(torch.long).to(self.device)
+        roberta_batch_of_target_ids = torch.tensor(np.stack(roberta_batch_of_target_ids)).to(self.device)
 
         return input_ids, roberta_batch_of_target_ids
 
+    def get_log_probs_at_mask(self, input_ids: torch.Tensor, mask_ids: torch.Tensor):
+        features, extra = self.model.model.forward(
+            input_ids.long().to(self.device), features_only=True, return_all_hiddens=False
+        )
+        features = features[:, mask_ids, :]
+        features_at_mask = torch.diagonal(features).T
+        logits = self.model.model.encoder.lm_head(features_at_mask)
+        log_prob = torch.log(logits.softmax(dim=-1))
+
+        return log_prob
+
+    def decode_batch(self, batch_of_topk_tokens: torch.Tensor,) -> List[List[str]]:
+        decoded = [
+            [" ".join([self.model.task.source_dictionary[t.item()] for t in tokens])
+             for tokens in batch_of_tokens
+            ]
+            for batch_of_tokens in batch_of_topk_tokens
+        ]
+        # Quick hack to fix https://github.com/pytorch/fairseq/issues/1306
+        return decoded
+
+    def _insert_mask(self, tokens, target_ids: torch.Tensor):
+        bs, topk, seqlen = tokens.shape
+        res = torch.zeros(bs, topk, seqlen + 1, device=self.device, dtype=torch.int32)
+        for i, mask_id in enumerate(target_ids):
+            res[i, :, :] = torch.cat([
+                tokens[i, :, :mask_id],
+                torch.full((topk, 1), self.model.task.mask_idx, device=self.device),
+                tokens[i, :, mask_id:]
+            ], dim=1)
+        return res
+
+    def predict_sentences(
+            self, tokens_sentences: torch.Tensor, target_ids: torch.Tensor
+    ) -> Tuple[np.array, List[List[str]]]:
+        bs, seqlen = tokens_sentences.shape
+        log_prob_over_dictionary = self.get_log_probs_at_mask(tokens_sentences[:, :], target_ids[:, 0])
+        cur_input_tokens = tokens_sentences.unsqueeze(1).repeat([1, self.topk, 1]) # bs, topk, seqlen # 250k
+        logits, cur_indexes = log_prob_over_dictionary.topk(k=self.topk, dim=-1) # topk ; topk
+        logits = logits
+        for i,mask_id in enumerate(target_ids[:, 0]):
+            cur_input_tokens[i, :, mask_id] = cur_indexes[i]
+        for i in range(1, self.num_masks):
+            if self.dec_type == 'cwm':
+                cur_input_tokens = self._insert_mask(cur_input_tokens, target_ids[:, i])
+                seqlen += 1
+            log_prob_over_dictionary = (
+                self.get_log_probs_at_mask(
+                    cur_input_tokens.view(bs * self.topk, seqlen),
+                    target_ids[:, i].repeat_interleave(self.topk)
+                )
+            )
+            log_prob_over_dictionary = log_prob_over_dictionary.view(bs, self.topk, -1)
+            cur_logits, cur_indexes = log_prob_over_dictionary.max(dim=-1)
+
+            for j, mask_id in enumerate(target_ids[:, i]):
+                cur_input_tokens[j, :, mask_id] = cur_indexes[j]
+
+            logits += cur_logits
+        pred_words = self.decode_batch(torch.stack([cur_input_tokens[i, :, m] for i,m in enumerate(target_ids)]))
+        return logits, pred_words
+
     def predict(
-        self, tokens_lists: List[List[str]], target_ids: List[int],
-    ) -> np.ndarray:
+        self, tokens_lists: List[List[str]], target_ids: List[int]
+    ) -> Tuple[np.ndarray, Dict[str, int]]:
         """
         Get log probability distribution over vocabulary.
 
         Args:
             tokens_lists: list of contexts
             target_ids: target word indexes
-
+            num_masks: number of masks to replace target with
         Returns:
             `numpy.ndarray`, matrix with rows - log-prob distribution over vocabulary.
+            word to index  mapping
         """
-        input_ids, mod_target_ids = self.prepare_batch(tokens_lists, target_ids)
+        log_probs = np.full((len(tokens_lists),  1 + self.topk*len(tokens_lists)), -np.inf)
+        input_ids, target_ids = self.prepare_batch(tokens_lists, target_ids, self.num_masks)
 
-        attention_mask = None
-        if self.use_attention_mask:
-            attention_mask = (input_ids != self.tokenizer.pad_token_id)
-            attention_mask = attention_mask.float().to(input_ids)
+        with torch.no_grad(), utils.model_eval(self.model):
+            batch_logits, batch_pred_words = self.predict_sentences(
+                input_ids, target_ids
+            )
+        # word2id = {'outofdictandsomereallylongstring': 0}
+        word2id = {}
+        max_id = -1
+        for sentence_idx, topk_words in enumerate(batch_pred_words):
+            for word_idx, word in enumerate(topk_words):
+                if word not in word2id:
+                    word2id[word] = max_id + 1
+                    max_id += 1
+                idx = word2id[word]
+                log_probs[sentence_idx, idx] = batch_logits[sentence_idx, word_idx]
 
-        with torch.no_grad():
-            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
-            logits = outputs[0]
-            logits = np.vstack([
-                logits[idx, target_idx, :].cpu().numpy()
-                for idx, target_idx in enumerate(mod_target_ids)
-            ])
-            return logits
+            # sum_probs = np.exp(batch_logits[sentence_idx, :].cpu().numpy().astype(np.float64)).sum()
+            # log_probs[sentence_idx, 0] = np.log(1 - sum_probs)
+
+        return log_probs[:, :max_id + 1], word2id
+
+    def process_words(self, word2id: Dict[str, int]) -> Dict[str, List[int]]:
+        merging_vocab = defaultdict(list)
+        for k, v in word2id.items():
+            if not k.startswith('\u2581'):
+                k = '\u2581' + k
+            k = k.split('\u2581')[1].replace(' ', '')
+            k = k.translate(str.maketrans('', '', string.punctuation))
+            if k:
+                merging_vocab[k].append(v)
+        return merging_vocab
+
+    def update_vocab(
+            self, merging_vocab: Dict[str, List[int]], log_probs: np.ndarray
+    ) -> Tuple[np.ndarray, Dict[str, int]]:
+        res_probs = []
+        res_word2id = {}
+        for i, (k, v) in enumerate(merging_vocab.items()):
+            new_vector = log_probs[:, v].max(axis=1)
+            res_probs.append(new_vector)
+            res_word2id[k] = i
+        res_probs_np = np.vstack(res_probs).T
+        return res_probs_np, res_word2id
+
+    def postprocess(
+        self,
+        log_probs: np.ndarray,
+        word2id: Dict[str, int],
+    ) -> Tuple[np.ndarray, Dict[str, int]]:
+        merging_vocab = self.process_words(word2id)
+        new_log_probs, new_word2id = self.update_vocab(merging_vocab, log_probs)
+        return new_log_probs, new_word2id
 
     @overrides
     def get_log_probs(
@@ -267,12 +367,9 @@ class XLMRProbEstimator(EmbSimProbEstimator):
             `numpy.ndarray` of log-probs distribution over vocabulary and the relative vocabulary.
         """
 
-        if self.embedding_similarity:
-            logits = self.get_emb_similarity(tokens_lists, target_ids)
-        else:
-            logits = self.predict(tokens_lists, target_ids)
-
-        return logits, self.word2id
+        log_probs, word2id = self.predict(tokens_lists, target_ids)
+        log_probs, word2id = self.postprocess(log_probs, word2id)
+        return log_probs, word2id
 
 
 class XLMRProbEstimator(EmbSimProbEstimator):
@@ -283,7 +380,7 @@ class XLMRProbEstimator(EmbSimProbEstimator):
         embedding_similarity: bool = False,
         temperature: float = 1.0,
         use_attention_mask: bool = True,
-        cuda_device: int = -1,
+        cuda_device: int = 0,
         sim_func: str = "dot-product",
         unk_word_embedding: str = "first_subtoken",
         filter_vocabulary_mode: str = "none",

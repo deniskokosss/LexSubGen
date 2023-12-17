@@ -149,7 +149,7 @@ def _convert_labels_to_semeval2013_file_format(
     for i in range(len(words)):
         if not context_ids[i].startswith(words[i]):
             context_ids[i] = f"{words[i]}.{context_ids[i]}"
-    with open(save_path, "w") as fd:
+    with open(save_path, "w", newline='') as fd:
         writer = csv.writer(fd, delimiter=" ")
         writer.writerows(zip(words, context_ids, labels))
 

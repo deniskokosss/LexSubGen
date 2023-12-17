@@ -1,4 +1,4 @@
-local prob_estimator = import 'configs/prob_estimators/lexsub/xlmr_embs_de.jsonnet';
+local prob_estimator = import 'configs/prob_estimators/lexsub/xlmr_123.jsonnet';
 local post_processing = import 'configs/subst_generators/post_processors/de_spacy_old_sum.jsonnet';
 
 {
@@ -9,8 +9,6 @@ local post_processing = import 'configs/subst_generators/post_processors/de_spac
         }
     ],
     prob_estimator: prob_estimator,
-    post_processing: [
-        {class_name: "post_processors.roberta_postproc.RobertaPostProcessor", strategy: "drop_subwords"}
-    ] + post_processing,
-    top_k: 15,
+    post_processing: post_processing,
+    top_k: 10,
 }

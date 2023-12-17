@@ -92,6 +92,6 @@ class TargetExcluder(PostProcessor):
             self.pos_lemma2words = {}
         for pos_tag in pos_tags:
             lemma2words, _ = get_all_vocabs(
-                word2id, self.lemmatizer, pos_tag, verbose=True
+                word2id, self.lemmatizer, self.lang, pos_tag, verbose=True
             )
             self.pos_lemma2words[pos_tag] = lemma2words

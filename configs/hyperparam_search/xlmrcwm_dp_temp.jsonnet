@@ -1,0 +1,50 @@
+local post_processing = import '../subst_generators/post_processors/spacy_old_sum.jsonnet';
+
+{
+    class_name: "SubstituteGenerator",
+    pre_processing: [
+        {
+            class_name: "pre_processors.base_preprocessors.AndPreprocessor"
+        }
+    ],
+    prob_estimator: {
+        class_name: "prob_estimators.combiner.AverageCombiner",
+        merge_vocab_type: "union",
+        prob_estimators: [
+            {
+                class_name: "prob_estimators.xlmr_estimator.XLMRProbEstimatorMultimasked",
+                topk: 10,
+                model_name: "/mnt/d/science/summer-wsi/xlmr_large_cwm_multi/model.pt",
+                num_masks: 3,
+                dynamic_pattern: {
+                    class_name: "Hyperparam",
+                    values: ["<T> or even <M>"],
+                    name: "dpl"
+                },
+                decoding_type: {
+                    class_name: "Hyperparam",
+                    values: ["cwm"],
+                    name: "multitoken"
+                }
+            },
+            {
+                class_name: "prob_estimators.xlmr_estimator.XLMRProbEstimatorMultimasked",
+                topk: 10,
+                model_name: "/mnt/d/science/summer-wsi/xlmr_large_cwm_multi/model.pt",
+                num_masks: 3,
+                dynamic_pattern: {
+                    class_name: "Hyperparam",
+                    values: ["<M> or even <T>"],
+                    name: "dpr"
+                },
+                decoding_type: {
+                    class_name: "Hyperparam",
+                    values: ["cwm"],
+                    name: "multitoken"
+                }
+            },
+        ]
+    },
+    post_processing: post_processing,
+    top_k: 10,
+}

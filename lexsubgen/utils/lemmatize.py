@@ -1,3 +1,4 @@
+import os
 import re
 import warnings
 from collections import defaultdict
@@ -51,8 +52,8 @@ def spacy_lemmatize(
     Returns:
         sequence of lemmatized words
     """
-    if spacy_version != "2.1.8":
-        warnings.warn(f"Your results may depend on the version of spacy: {spacy_version}")
+    # if spacy_version != "2.1.8":
+    #     warnings.warn(f"Your results may depend on the version of spacy: {spacy_version}")
 
     pattern = re.compile(r"[#\[-]")
     lemmatizer = English.Defaults.create_lemmatizer()
@@ -98,13 +99,22 @@ def old_spacy_lemmatize(
         'fr': 'fr_core_news_md',
         'sv': 'sv_core_news_md',
         'ru': 'ru_core_news_md',
+        'sl': 'sl_core_news_md',
         'it': 'it_core_news_md',
         'ja': 'ja_core_news_md',
     }
-    if spacy_version != "2.1.8":
-        warnings.warn(f"Your results may depend on the version of spacy: {spacy_version}")
+    # if spacy_version != "2.1.8":
+    #     warnings.warn(f"Your results may depend on the version of spacy: {spacy_version}")
 
-    nlp = spacy.load(lang2model[lang], disable=["ner", "parser"])
+    cache_dir = '~/.spacy_cache'
+    os.makedirs(cache_dir, exist_ok=True)
+    model_path = lang2model[lang]
+    try:
+        nlp = spacy.load(os.path.join(cache_dir, model_path), disable=["ner", "parser"])
+    except OSError:
+        spacy.cli.download(model_path)
+        nlp = spacy.load(model_path, disable=["ner", "parser"])
+        nlp.to_disk(os.path.join(cache_dir, model_path))
 
     lemmatized_words = []
 
@@ -114,8 +124,8 @@ def old_spacy_lemmatize(
         warnings.simplefilter("ignore")
         gen = zip(nlp.pipe(unlem, batch_size=1000), unlem)
 
-        if verbose:
-            gen = tqdm(gen, total=len(unlem), desc=f"Lemmatization of {len(unlem)} words")
+        # if verbose:
+        #     gen = tqdm(gen, total=len(unlem), desc=f"Lemmatization of {len(unlem)} words")
 
         for spacyed, word in gen:
             if "#" in word or "[" in word or word == "":
