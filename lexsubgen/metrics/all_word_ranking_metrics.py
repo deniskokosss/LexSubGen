@@ -1,6 +1,10 @@
 from collections import OrderedDict
 from typing import List, Dict, Tuple, Set, Union
-
+from pathlib import Path
+import tempfile
+import subprocess
+import re
+import warnings
 
 def compute_precision_recall_f1_topk(
     gold_substitutes: List[str],
@@ -103,3 +107,76 @@ def oot_score(golds: Dict[str, int], substitutes: List[str]):
             score += golds[subst]
     score = score / sum([value for value in golds.values()])
     return score
+
+
+def dump_pred_substitutes_semeval2010task2(
+    pred_substitutes: Dict[str, List[str]], dest_path: str,
+):
+    with open(f"{dest_path}.best", mode="w", encoding='utf-8') as f:
+        for inst_id, substs in pred_substitutes.items():
+            if len(substs) == 0:
+                warnings.warn(f"Instance {inst_id} has 0 predicted substitutes")
+                print(inst_id, "", sep=' :: ', file=f)
+            else:
+                print(inst_id, substs[0], sep=' :: ', file=f)
+
+    with open(f"{dest_path}.oot", mode="w", encoding='utf-8') as f:
+        for inst_id, substs in pred_substitutes.items():
+            print(inst_id, "".join(f"{s};" for s in substs), sep=' ::: ', file=f)
+    return
+
+
+def dump_gold_substitutes_semeval2010task2(
+    gold_substitutes: Dict[str, Dict[str, int]], dest_path: str,
+):
+    with open(dest_path, mode="w", encoding='utf-8') as f:
+        for inst_id, subst2weight in gold_substitutes.items():
+            substs_str = "".join(f"{s} {w};" for s, w in subst2weight.items())
+            print(inst_id, substs_str, sep=' :: ', file=f)
+    return
+
+
+def extract_semeval2010task2_scores(
+    results_path: str
+) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    with open(results_path, mode="r", encoding='utf-8') as f:
+        read = f.read()
+        ((rec, prec), (mrec, mprec)) = re.findall(
+            r".*recall = (.*), .*precision = (.*).*", read
+        )
+        return (float(rec), float(prec)), (float(mrec), float(mprec))
+
+
+def semeval2010task2_scores(
+    gold_substitutes: Dict[str, Dict[str, int]],
+    pred_substitutes: Dict[str, List[str]],
+):
+    SE2010T2_DIR = Path(__file__).parent
+    scoring = SE2010T2_DIR / "cllsscore.pl"
+    with tempfile.TemporaryDirectory() as tempdir:
+        pred_substs = Path(tempdir) / f"substitutes.pred"
+        gold_substs = Path(tempdir) / f"substitutes.gold"
+        dump_pred_substitutes_semeval2010task2(pred_substitutes, dest_path=str(pred_substs))
+        dump_gold_substitutes_semeval2010task2(gold_substitutes, dest_path=str(gold_substs))
+        subprocess.run(
+            ["perl", scoring, f"{pred_substs}.best", gold_substs],
+            # capture_output=False
+        )
+        subprocess.run(
+            ["perl", scoring, f"{pred_substs}.oot", gold_substs, "-t", "oot"],
+            # capture_output=False
+        )
+        scores = OrderedDict()
+
+        ((rec, prec), (mrec, mprec)) = extract_semeval2010task2_scores(
+            f"{pred_substs}.best.results"
+        )
+        scores["se10t2-rec@1"], scores["se10t2-prec@1"] = rec, prec
+        scores["se10t2-mrec@1"], scores["se10t2-mprec@1"] = mrec, mprec
+
+        ((rec, prec), (mrec, mprec)) = extract_semeval2010task2_scores(
+            f"{pred_substs}.oot.results"
+        )
+        scores["se10t2-rec@10"], scores["se10t2-prec@10"] = rec, prec
+        scores["se10t2-mrec@10"], scores["se10t2-mprec@10"] = mrec, mprec
+    return scores

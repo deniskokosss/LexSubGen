@@ -14,7 +14,8 @@ from lexsubgen.datasets.lexsub import DatasetReader
 from lexsubgen.evaluations.task import Task
 from lexsubgen.metrics.all_word_ranking_metrics import (
     compute_precision_recall_f1_topk,
-    compute_precision_recall_f1_vocab
+    compute_precision_recall_f1_vocab,
+    semeval2010task2_scores
 )
 from lexsubgen.metrics.candidate_ranking_metrics import gap_score
 from lexsubgen.runner import Runner
@@ -40,6 +41,7 @@ class LexSubEvaluation(Task):
         save_instance_results: bool = True,
         save_wordnet_relations: bool = False,
         save_target_rank: bool = False,
+        compute_se10t2_metric: bool = False,
     ):
         """
         Main class for performing Lexical Substitution task evaluation.
@@ -69,6 +71,8 @@ class LexSubEvaluation(Task):
         self.save_wordnet_relations = save_wordnet_relations
         self.save_target_rank = save_target_rank
         self.save_instance_results = save_instance_results
+
+        self.compute_se10t2_metric: bool = compute_se10t2_metric
 
         self.gap_metrics = ["gap", "gap_normalized", "gap_vocab_normalized"]
         self.base_metrics = ["precision", "recall", "f1_score"]
@@ -111,7 +115,6 @@ class LexSubEvaluation(Task):
             )
 
         all_metrics_data, columns = [], None
-
         for (
             tokens_lists,
             target_ids,
@@ -180,7 +183,6 @@ class LexSubEvaluation(Task):
                     instance_results.update(
                         (k, v) for k, v in additional_results.items()
                     )
-
                 all_metrics_data.append(list(instance_results.values()))
 
                 if columns is None:
@@ -192,6 +194,18 @@ class LexSubEvaluation(Task):
             metric: round(all_metrics[metric].mean(skipna=True) * 100, 2)
             for metric in self.metrics
         }
+        if self.compute_se10t2_metric:
+            golds = all_metrics["gold_substitutes"].tolist()
+            weights = all_metrics['gold_weights'].tolist()
+            targets = all_metrics['target_lemma'] + '.' + all_metrics['target_pos_tag']
+            se20t2_metrics = semeval2010task2_scores(
+                gold_substitutes={
+                    f'{targets[i]} {i}': {subst: int(weight) for subst,weight in zip(golds[i], weights[i])}
+                    for i in range(len(dataset))
+                },
+                pred_substitutes={f'{targets[i]} {i}': substs for i,substs in enumerate(all_metrics['pred_substitutes'].tolist())}
+            )
+            mean_metrics |= se20t2_metrics
 
         return {"mean_metrics": mean_metrics, "instance_metrics": all_metrics}
 
@@ -205,17 +219,17 @@ class LexSubEvaluation(Task):
         instance_results = OrderedDict()
         pos_tag = to_wordnet_pos.get(pos_tag, None)
         target = tokens[target_id]
-        instance_results["gold_substitutes"] = json.dumps(gold_substitutes)
-        instance_results["gold_weights"] = json.dumps(gold_weights)
-        instance_results["pred_substitutes"] = json.dumps(pred_substitutes)
-        instance_results["candidates"] = json.dumps(candidates)
-        instance_results["ranked_candidates"] = json.dumps(ranked_candidates)
+        instance_results["gold_substitutes"] = gold_substitutes
+        instance_results["gold_weights"] = gold_weights
+        instance_results["pred_substitutes"] = pred_substitutes
+        instance_results["candidates"] = candidates
+        instance_results["ranked_candidates"] = ranked_candidates
 
         if hasattr(self.substitute_generator, "prob_estimator"):
             prob_estimator = self.substitute_generator.prob_estimator
             if target in word2id:
                 instance_results["target_subtokens"] = 1
-            elif hasattr(prob_estimator, "tokenizer"):
+            elif hasattr(prob_estimator, "tokenizer") and hasattr(prob_estimator.tokenizer, "tokenize"):
                 target_subtokens = prob_estimator.tokenizer.tokenize(target)
                 instance_results["target_subtokens"] = len(target_subtokens)
             else:
@@ -303,6 +317,7 @@ class LexSubEvaluation(Task):
             "save_instance_results": self.save_instance_results,
             "save_wordnet_relations": self.save_wordnet_relations,
             "save_target_rank": self.save_target_rank,
+            'compute_se10t2_metric': self.compute_se10t2_metric
         }
         runner = Runner(run_dir, force, auto_create_subdir)
         dump_json(Path(run_dir) / "config.json", config)

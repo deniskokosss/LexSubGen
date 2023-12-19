@@ -21,11 +21,14 @@ LEXSUB_DATASET_DRIVE_URLS = {
     "semeval_test": "https://docs.google.com/uc?export=download&id=1StQwn2d1eYy3phHfWqAyRYE7CTLsO2pg",
     "semeval_trial": "https://docs.google.com/uc?export=download&id=1SiPovrnD_EMrdhkyII3Vkw-jinUZZBqn",
     "twsi2": "https://docs.google.com/uc?export=download&id=1SYljWOOlkIPfcc8GWlm_ioVW9n__dZ83",
+    'se10_trial': "",
+    'se10_test': ''
+
 }
 
 # List of supported data sets.
 LEXSUB_DATASETS = ("semeval_all", "semeval_trial", "semeval_test", "coinco", "twsi2",
-                   'germeval2015', "lexsubfr_semdis2014")
+                   'germeval2015', "lexsubfr_semdis2014", 'se10_trial', 'se10_test')
 
 
 class LexSubDatasetReader(DatasetReader):

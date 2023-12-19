@@ -118,9 +118,9 @@ class Runner:
         metrics = task.evaluate(run_dir=self.run_dir)
         metrics = metrics["mean_metrics"]
         log_metrics(self.mlflow_client, run_entity, metrics)
-        self.mlflow_client.log_artifacts(
-            run_entity.info.run_uuid, local_dir=self.run_dir
-        )
+        # self.mlflow_client.log_artifacts(
+        #     run_entity.info.run_uuid
+        # )
         logger.info("Evaluation performed.")
 
     def hyperparam_search(self, config_path: str, experiment_name: str) -> NoReturn:
